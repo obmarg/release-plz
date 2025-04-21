@@ -6,7 +6,6 @@ use cargo_utils::{CARGO_TOML, LocalManifest};
 use git_cmd::Repo;
 
 use anyhow::Context;
-use itertools::Update;
 use serde::Serialize;
 use tracing::{debug, info, instrument};
 use url::Url;
@@ -18,12 +17,12 @@ use crate::git::forge::{
 use crate::git::github_graphql;
 use crate::pr::{DEFAULT_BRANCH_PREFIX, OLD_BRANCH_PREFIX, Pr};
 use crate::{
-    PackagesUpdate, Project, copy_to_temp_dir, new_manifest_dir_path, new_project_root,
-    publishable_packages_from_manifest, root_repo_path_from_manifest_dir, update,
+    PackagesUpdate, copy_to_temp_dir, new_manifest_dir_path, new_project_root,
+    publishable_packages_from_manifest, root_repo_path_from_manifest_dir,
 };
 
+use super::perform_update;
 use super::update_request::UpdateRequest;
-use super::{PackagesToUpdate, perform_update};
 
 #[derive(Debug)]
 pub struct ReleasePrRequest {

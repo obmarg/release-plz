@@ -60,8 +60,8 @@ pub async fn perform_update(
     let all_packages: Vec<Package> = cargo_utils::workspace_members(&local_metadata)?.collect();
     let all_packages_ref: Vec<&Package> = all_packages.iter().collect();
 
-    update_manifests(&packages_to_update, local_manifest_path, &all_packages_ref)?;
-    update_changelogs(input, &packages_to_update)?;
+    update_manifests(packages_to_update, local_manifest_path, &all_packages_ref)?;
+    update_changelogs(input, packages_to_update)?;
     if !packages_to_update.updates().is_empty() {
         let local_manifest_dir = input.local_manifest_dir()?;
         update_cargo_lock(local_manifest_dir, input.should_update_dependencies())?;
