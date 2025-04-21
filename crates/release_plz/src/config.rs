@@ -232,6 +232,9 @@ pub struct PackageSpecificConfig {
     /// # Version group
     /// The name of a group of packages that needs to have the same version.
     version_group: Option<String>,
+    /// # PR Branch Prefix
+    /// Prefix for the PR Branch
+    pr_branch_prefix: Option<String>,
 }
 
 impl PackageSpecificConfig {
@@ -241,6 +244,7 @@ impl PackageSpecificConfig {
             common: self.common.merge(default),
             changelog_include: self.changelog_include,
             version_group: self.version_group,
+            pr_branch_prefix: self.pr_branch_prefix,
         }
     }
 }
@@ -376,6 +380,9 @@ pub struct PackageConfig {
     /// # Release
     /// Used to toggle off the update/release process for a workspace or package.
     pub release: Option<bool>,
+    /// # PR Branch Prefix
+    /// Prefix for the PR Branch
+    pub pr_branch_prefix: Option<String>,
 }
 
 impl From<PackageConfig> for release_plz_core::UpdateConfig {
@@ -387,6 +394,7 @@ impl From<PackageConfig> for release_plz_core::UpdateConfig {
             tag_name_template: config.git_tag_name,
             features_always_increment_minor: config.features_always_increment_minor == Some(true),
             changelog_path: config.changelog_path.map(|p| to_utf8_pathbuf(p).unwrap()),
+            pr_branch_prefix: config.pr_branch_prefix,
         }
     }
 }
@@ -426,6 +434,7 @@ impl PackageConfig {
             git_tag_enable: self.git_tag_enable.or(default.git_tag_enable),
             git_tag_name: self.git_tag_name.or(default.git_tag_name),
             release: self.release.or(default.release),
+            pr_branch_prefix: self.pr_branch_prefix.or(default.pr_branch_prefix),
         }
     }
 
@@ -546,6 +555,7 @@ mod tests {
                 },
                 changelog_include: None,
                 version_group: None,
+                pr_branch_prefix: None,
             },
         }
     }
@@ -666,6 +676,7 @@ mod tests {
                     },
                     changelog_include: Some(vec!["pkg1".to_string()]),
                     version_group: None,
+                    pr_branch_prefix: None,
                 },
             }]
             .into(),

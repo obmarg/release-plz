@@ -20,6 +20,7 @@ pub struct UpdateConfig {
     pub features_always_increment_minor: bool,
     /// Template for the git tag created by release-plz.
     pub tag_name_template: Option<String>,
+    pub pr_branch_prefix: Option<String>,
 }
 
 /// Package-specific config
@@ -62,6 +63,7 @@ impl Default for UpdateConfig {
             features_always_increment_minor: false,
             tag_name_template: None,
             changelog_path: None,
+            pr_branch_prefix: None,
         }
     }
 }

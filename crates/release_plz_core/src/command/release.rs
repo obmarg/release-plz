@@ -55,6 +55,8 @@ pub struct ReleaseRequest {
     publish_timeout: Duration,
     /// PR Branch Prefix
     branch_prefix: String,
+    // TODO: Probably want to remove the above and follow the errors
+    // to figure out how to handle branch_prefix now...
 }
 
 impl ReleaseRequest {
@@ -664,6 +666,12 @@ async fn should_release(
 ) -> anyhow::Result<ShouldRelease> {
     let last_commit = repo.current_commit_hash()?;
     let prs = git_client.associated_prs(&last_commit).await?;
+    // TODO: this probably wants to just use _all_ the branch prefixes?
+    // Ofc that does make things a little difficult if we've got any
+    // templates in those prefixes...
+    // TODO: make that easier to determine?  Or possibly we need to resolve
+    // templates in a predictable way?  If they're resolved with just package
+    // metadata it's easy enough to figure the full set out here...
     let associated_release_pr = prs
         .iter()
         .find(|pr| pr.branch().starts_with(&input.branch_prefix));

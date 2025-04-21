@@ -1,24 +1,29 @@
-use cargo_metadata::camino::Utf8Path;
+use std::collections::BTreeMap;
+
+use cargo_metadata::camino::{Utf8Path, Utf8PathBuf};
 use cargo_metadata::semver::Version;
-use cargo_utils::CARGO_TOML;
+use cargo_utils::{CARGO_TOML, LocalManifest};
 use git_cmd::Repo;
 
 use anyhow::Context;
+use itertools::Update;
 use serde::Serialize;
 use tracing::{debug, info, instrument};
 use url::Url;
 
+use crate::fs_utils::Utf8TempDir;
 use crate::git::forge::{
     ForgeType, GitClient, GitPr, PrEdit, contributors_from_commits, validate_labels,
 };
 use crate::git::github_graphql;
 use crate::pr::{DEFAULT_BRANCH_PREFIX, OLD_BRANCH_PREFIX, Pr};
 use crate::{
-    PackagesUpdate, copy_to_temp_dir, new_manifest_dir_path, new_project_root,
+    PackagesUpdate, Project, copy_to_temp_dir, new_manifest_dir_path, new_project_root,
     publishable_packages_from_manifest, root_repo_path_from_manifest_dir, update,
 };
 
 use super::update_request::UpdateRequest;
+use super::{PackagesToUpdate, perform_update};
 
 #[derive(Debug)]
 pub struct ReleasePrRequest {
@@ -30,8 +35,6 @@ pub struct ReleasePrRequest {
     draft: bool,
     /// Labels to add to the release PR.
     labels: Vec<String>,
-    /// PR Branch Prefix
-    branch_prefix: String,
     pub update_request: UpdateRequest,
 }
 
@@ -42,7 +45,6 @@ impl ReleasePrRequest {
             pr_body_template: None,
             draft: false,
             labels: vec![],
-            branch_prefix: DEFAULT_BRANCH_PREFIX.to_string(),
             update_request,
         }
     }
@@ -64,13 +66,6 @@ impl ReleasePrRequest {
 
     pub fn mark_as_draft(mut self, draft: bool) -> Self {
         self.draft = draft;
-        self
-    }
-
-    pub fn with_branch_prefix(mut self, pr_branch_prefix: Option<String>) -> Self {
-        if let Some(branch_prefix) = pr_branch_prefix {
-            self.branch_prefix = branch_prefix;
-        }
         self
     }
 }
@@ -119,38 +114,63 @@ pub struct PrPackageRelease {
 ///   are up-to-date.
 #[instrument(skip_all)]
 pub async fn release_pr(input: &ReleasePrRequest) -> anyhow::Result<Option<ReleasePr>> {
-    let manifest_dir = input.update_request.local_manifest_dir()?;
-    let original_project_root = root_repo_path_from_manifest_dir(manifest_dir)?;
-    let tmp_project_root_parent = copy_to_temp_dir(&original_project_root)?;
-    let tmp_project_manifest_dir = new_manifest_dir_path(
-        &original_project_root,
-        manifest_dir,
-        tmp_project_root_parent.path(),
-    )?;
-
     validate_labels(&input.labels)?;
-    let tmp_project_root =
-        new_project_root(&original_project_root, tmp_project_root_parent.path())?;
-
-    let local_manifest = tmp_project_manifest_dir.join(CARGO_TOML);
-    let new_update_request = input
-        .update_request
-        .clone()
-        .set_local_manifest(&local_manifest)
-        .context("can't find temporary project")?;
-    let (packages_to_update, _temp_repository) = update(&new_update_request)
+    let (new_update_request, _tmp_dir, tmp_project_root) =
+        copy_repository_for_updates(&input.update_request)?;
+    let (packages_to_update, _repository) = crate::next_versions(&new_update_request)
         .await
-        .context("failed to update packages")?;
+        .context("failed to determine next versions")?;
+
+    let groups = packages_to_update.updates_clone().into_iter().fold(
+        BTreeMap::<String, PackagesUpdate>::new(),
+        |mut groups, (package, update_result)| {
+            // TODO: Probably offload this to a function somewhere...
+            let branch = input
+                .update_request
+                // TODO: This config should actually come from the ReleasePrRequest
+                // not the UpdateRequest...
+                // But that's a cleanup I can do later...
+                .get_package_config(&package.name)
+                .generic
+                .pr_branch_prefix
+                .unwrap_or_else(|| DEFAULT_BRANCH_PREFIX.to_string());
+
+            let inherits_version = LocalManifest::try_new(&package.manifest_path)
+                .map(|manifest| manifest.version_is_inherited())
+                .unwrap_or_default();
+
+            let group = groups
+                .entry(branch)
+                .or_insert_with(|| PackagesUpdate::new(vec![]));
+
+            group.push_update((package, update_result));
+            if inherits_version {
+                if let Some(workspace_version) = packages_to_update.workspace_version() {
+                    group.with_workspace_version(workspace_version.clone());
+                }
+            }
+
+            groups
+        },
+    );
+
     let git_client = input
         .update_request
         .git_client()?
         .context("can't find git client")?;
-    if !packages_to_update.updates().is_empty() {
-        let repo = Repo::new(tmp_project_root)?;
+    for (pr_branch_prefix, packages_to_update) in groups {
+        let (new_update_request, _tmp_dir, tmp_project_root) =
+            copy_repository_for_updates(&new_update_request)?;
+
+        perform_update(&new_update_request, &packages_to_update)
+            .await
+            .context("failed to update packages")?;
+
+        let repo = Repo::new(tmp_project_root.clone())?;
         let there_are_commits_to_push = repo.is_clean().is_err();
         if there_are_commits_to_push {
             let pr = open_or_update_release_pr(
-                &local_manifest,
+                new_update_request.local_manifest(),
                 &packages_to_update,
                 &git_client,
                 &repo,
@@ -159,7 +179,7 @@ pub async fn release_pr(input: &ReleasePrRequest) -> anyhow::Result<Option<Relea
                     pr_name: input.pr_name_template.clone(),
                     pr_body: input.pr_body_template.clone(),
                     pr_labels: input.labels.clone(),
-                    pr_branch_prefix: input.branch_prefix.clone(),
+                    pr_branch_prefix: pr_branch_prefix.clone(),
                 },
             )
             .await?;
@@ -168,6 +188,34 @@ pub async fn release_pr(input: &ReleasePrRequest) -> anyhow::Result<Option<Relea
     }
 
     Ok(None)
+}
+
+fn copy_repository_for_updates(
+    update_request: &UpdateRequest,
+) -> anyhow::Result<(UpdateRequest, Utf8TempDir, Utf8PathBuf)> {
+    let manifest_dir = update_request.local_manifest_dir()?;
+    let original_project_root = root_repo_path_from_manifest_dir(manifest_dir)?;
+    let tmp_project_root_parent = copy_to_temp_dir(&original_project_root)?;
+    let tmp_project_manifest_dir = new_manifest_dir_path(
+        &original_project_root,
+        manifest_dir,
+        tmp_project_root_parent.path(),
+    )?;
+
+    let tmp_project_root =
+        new_project_root(&original_project_root, tmp_project_root_parent.path())?;
+
+    let local_manifest = tmp_project_manifest_dir.join(CARGO_TOML);
+    let new_update_request = update_request
+        .clone()
+        .set_local_manifest(&local_manifest)
+        .context("can't find temporary project")?;
+
+    Ok((
+        new_update_request,
+        tmp_project_root_parent,
+        tmp_project_root,
+    ))
 }
 
 struct ReleasePrOptions {

@@ -29,7 +29,8 @@ impl ReleasePr {
         let request = ReleasePrRequest::new(update_request)
             .mark_as_draft(pr_draft)
             .with_labels(pr_labels)
-            .with_branch_prefix(pr_branch_prefix)
+            // TODO: Figure out if removing this is right.  If so, maybe remove the above...
+            // .with_branch_prefix(pr_branch_prefix)
             .with_pr_name_template(pr_name)
             .with_pr_body_template(pr_body);
         Ok(request)

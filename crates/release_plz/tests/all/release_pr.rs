@@ -719,6 +719,78 @@ async fn release_plz_doesnt_add_invalid_labels_to_release_pr() {
     }
 }
 
+#[tokio::test]
+#[cfg_attr(not(feature = "docker-tests"), ignore)]
+async fn release_plz_opens_two_prs_when_different_branch_prefix_provided() {
+    let one = "one";
+    let two = "two";
+    let context = TestContext::new_workspace(&[one, two]).await;
+    context.write_release_plz_toml(
+        r#"
+        [[package]]
+        name = "one"
+        pr_branch_prefix = "test-release-one"
+
+        [[package]]
+        name = "two"
+        pr_branch_prefix = "test-release-two"
+    "#,
+    );
+
+    context.run_release_pr().success();
+    let today = today();
+
+    let opened_prs = context.opened_prs("test-").await;
+    assert_eq!(opened_prs.len(), 1);
+
+    let open_pr = &opened_prs[0];
+    assert_eq!(open_pr.title, "chore: release v0.1.0");
+
+    let username = context.gitea.user.username();
+    let repo = &context.gitea.repo;
+    assert_eq!(
+        open_pr.body.as_ref().unwrap().trim(),
+        format!(
+            r#"
+## 🤖 New release
+
+* `{one}`: 0.1.0
+* `{two}`: 0.1.0
+
+<details><summary><i><b>Changelog</b></i></summary><p>
+
+## `{one}`
+
+<blockquote>
+
+## [0.1.0](https://localhost/{username}/{repo}/releases/tag/{one}-v0.1.0) - {today}
+
+### Other
+
+- cargo init
+</blockquote>
+
+## `{two}`
+
+<blockquote>
+
+## [0.1.0](https://localhost/{username}/{repo}/releases/tag/{two}-v0.1.0) - {today}
+
+### Other
+
+- cargo init
+</blockquote>
+
+
+</p></details>
+
+---
+This PR was generated with [release-plz](https://github.com/release-plz/release-plz/)."#,
+        )
+        .trim()
+    );
+}
+
 fn move_readme(context: &TestContext, message: &str) {
     let readme = "README.md";
     let new_readme = format!("NEW_{readme}");

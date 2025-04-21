@@ -202,10 +202,11 @@ impl TestContext {
     }
 
     pub async fn opened_release_prs(&self) -> Vec<GitPr> {
-        self.git_client
-            .opened_prs(DEFAULT_BRANCH_PREFIX)
-            .await
-            .unwrap()
+        self.opened_prs(DEFAULT_BRANCH_PREFIX).await
+    }
+
+    pub async fn opened_prs(&self, prefix: &str) -> Vec<GitPr> {
+        self.git_client.opened_prs(prefix).await.unwrap()
     }
 
     pub fn write_release_plz_toml(&self, content: &str) {

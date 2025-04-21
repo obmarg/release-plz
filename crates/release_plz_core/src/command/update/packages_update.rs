@@ -27,6 +27,10 @@ impl PackagesUpdate {
         self.workspace_version = Some(workspace_version);
     }
 
+    pub fn push_update(&mut self, update: (Package, UpdateResult)) {
+        self.updates.push(update);
+    }
+
     pub fn updates(&self) -> &[(Package, UpdateResult)] {
         &self.updates
     }

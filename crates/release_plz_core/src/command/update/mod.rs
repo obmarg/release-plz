@@ -42,12 +42,24 @@ pub async fn update(input: &UpdateRequest) -> anyhow::Result<(PackagesUpdate, Te
     let (packages_to_update, repository) = crate::next_versions(input)
         .await
         .context("failed to determine next versions")?;
+
+    perform_update(input, &packages_to_update).await;
+
+    Ok((packages_to_update, repository))
+}
+
+#[instrument(skip_all)]
+pub async fn perform_update(
+    input: &UpdateRequest,
+    packages_to_update: &PackagesUpdate,
+) -> anyhow::Result<()> {
     let local_manifest_path = input.local_manifest();
     let local_metadata = cargo_utils::get_manifest_metadata(local_manifest_path)?;
     // Read packages from `local_metadata` to update the manifest of local
     // workspace dependencies.
     let all_packages: Vec<Package> = cargo_utils::workspace_members(&local_metadata)?.collect();
     let all_packages_ref: Vec<&Package> = all_packages.iter().collect();
+
     update_manifests(&packages_to_update, local_manifest_path, &all_packages_ref)?;
     update_changelogs(input, &packages_to_update)?;
     if !packages_to_update.updates().is_empty() {
@@ -61,7 +73,7 @@ pub async fn update(input: &UpdateRequest) -> anyhow::Result<(PackagesUpdate, Te
         }
     }
 
-    Ok((packages_to_update, repository))
+    Ok(())
 }
 
 fn update_manifests(
